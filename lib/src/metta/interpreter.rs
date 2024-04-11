@@ -73,14 +73,53 @@ use crate::common::collections::ListMap;
 use crate::metta::*;
 use crate::metta::types::{is_func, get_arg_types, get_type_bindings,
     get_atom_types, match_reducted_types};
-use crate::common::ReplacingMapper;
 
 use std::ops::Deref;
 use std::rc::Rc;
 use std::fmt::{Debug, Display, Formatter};
+use std::collections::HashSet;
+
+/// Wrapper, So the old interpreter can present the same public interface as the new intperpreter
+pub struct InterpreterState<'a, T: SpaceRef<'a>> {
+    step_result: StepResult<'a, Results, InterpreterError>,
+    phantom: core::marker::PhantomData<T>
+}
+
+impl<'a, T: SpaceRef<'a>> InterpreterState<'a, T> {
+
+    /// INTERNAL USE ONLY. Create an InterpreterState that is ready to yield results
+    #[cfg(not(feature = "minimal"))]
+    pub(crate) fn new_finished(_space: T, results: Vec<Atom>) -> Self {
+        Self {
+            step_result: StepResult::Return(results.into_iter().map(|atom| InterpretedAtom(atom, Bindings::new())).collect()),
+            phantom: <_>::default(),
+        }
+    }
+
+    pub fn has_next(&self) -> bool {
+        self.step_result.has_next()
+    }
+    pub fn into_result(self) -> Result<Vec<Atom>, String> {
+        match self.step_result {
+            StepResult::Return(mut res) => {
+                let res = res.drain(0..).map(|res| res.into_tuple().0).collect();
+                Ok(res)
+            },
+            StepResult::Error((atom, err)) => Ok(vec![Atom::expr([ERROR_SYMBOL, atom, err])]),
+            StepResult::Execute(_) => Err("Evaluation is not finished".into())
+        }
+    }
+}
+
+impl<'a, T: SpaceRef<'a>> Debug for InterpreterState<'a, T> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        Debug::fmt(&self.step_result, f)
+    }
+}
 
 /// Result of atom interpretation plus variable bindings found
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct InterpretedAtom(Atom, Bindings);
 
 impl InterpretedAtom {
@@ -132,7 +171,12 @@ type NoInputPlan<'a> = Box<dyn Plan<'a, (), Results, InterpreterError> + 'a>;
 /// # Arguments
 /// * `space` - atomspace to query for interpretation
 /// * `expr` - atom to interpret
-pub fn interpret_init<'a, T: Space + 'a>(space: T, expr: &Atom) -> StepResult<'a, Results, InterpreterError> {
+pub fn interpret_init<'a, T: Space + 'a>(space: T, expr: &Atom) -> InterpreterState<'a, T> {
+    let step_result = interpret_init_internal(space, expr);
+    InterpreterState { step_result: step_result, phantom: <_>::default() }
+}
+
+fn interpret_init_internal<'a, T: Space + 'a>(space: T, expr: &Atom) -> StepResult<'a, Results, InterpreterError> {
     let context = InterpreterContextRef::new(space);
     interpret_as_type_plan(context,
         InterpretedAtom(expr.clone(), Bindings::new()),
@@ -145,10 +189,10 @@ pub fn interpret_init<'a, T: Space + 'a>(space: T, expr: &Atom) -> StepResult<'a
 ///
 /// # Arguments
 /// * `step` - [StepResult::Execute] result from the previous step.
-pub fn interpret_step<'a>(step: StepResult<'a, Results, InterpreterError>) -> StepResult<'a, Results, InterpreterError> {
+pub fn interpret_step<'a, T: Space + 'a>(step: InterpreterState<'a, T>) -> InterpreterState<'a, T> {
     log::debug!("current plan:\n{:?}", step);
-    match step {
-        StepResult::Execute(plan) => plan.step(()),
+    match step.step_result {
+        StepResult::Execute(plan) => InterpreterState { step_result: plan.step(()), phantom: <_>::default() },
         StepResult::Return(_) => panic!("Plan execution is finished already"),
         StepResult::Error(_) => panic!("Plan execution is finished with error"),
     }
@@ -162,10 +206,10 @@ pub fn interpret_step<'a>(step: StepResult<'a, Results, InterpreterError>) -> St
 /// * `expr` - atom to interpret
 pub fn interpret<T: Space>(space: T, expr: &Atom) -> Result<Vec<Atom>, String> {
     let mut step = interpret_init(space, expr);
-    while step.has_next() {
+    while step.step_result.has_next() {
         step = interpret_step(step);
     }
-    match step {
+    match step.step_result {
         StepResult::Return(mut result) => Ok(result.drain(0..)
             .map(|InterpretedAtom(atom, _)| atom).collect()),
         // TODO: return (Error atom err) expression
@@ -185,7 +229,7 @@ impl InterpreterCache {
     }
 
     fn get(&self, key: &Atom) -> Option<Results> {
-        let mut var_mapper = ReplacingMapper::new(VariableAtom::make_unique);
+        let mut var_mapper = crate::common::CachingMapper::new(VariableAtom::make_unique);
         key.iter().filter_type::<&VariableAtom>()
             .for_each(|v| { var_mapper.mapping_mut().insert(v.clone(), v.clone()); });
 
@@ -195,7 +239,7 @@ impl InterpreterCache {
             for res in results {
                 let mut atom = res.atom().clone();
                 atom.iter_mut().filter_type::<&mut VariableAtom>()
-                    .for_each(|var| var_mapper.replace(var));
+                    .for_each(|var| *var = var_mapper.replace(var.clone()));
                 let bindings = res.bindings().clone().rename_vars(var_mapper.as_fn_mut());
                 result.push(InterpretedAtom(atom, bindings));
             }
@@ -205,9 +249,9 @@ impl InterpreterCache {
 
     fn insert(&mut self, key: Atom, mut value: Results) {
         value.iter_mut().for_each(|res| {
-            let vars = key.iter().filter_type::<&VariableAtom>().collect();
+            let vars: HashSet<&VariableAtom> = key.iter().filter_type::<&VariableAtom>().collect();
             res.0 = apply_bindings_to_atom(&res.0, &res.1);
-            res.1.cleanup(&vars);
+            res.1.retain(|v| vars.contains(v));
         });
         self.0.insert(key, value)
     }
@@ -226,7 +270,7 @@ impl SpaceObserver for InterpreterCache {
 
 use std::marker::PhantomData;
 
-trait SpaceRef<'a> : Space + 'a {}
+pub trait SpaceRef<'a> : Space + 'a {}
 impl<'a, T: Space + 'a> SpaceRef<'a> for T {}
 
 struct InterpreterContext<'a, T: SpaceRef<'a>> {
@@ -267,13 +311,21 @@ fn is_grounded_op(expr: &ExpressionAtom) -> bool {
     }
 }
 
-fn has_grounded_sub_expr(expr: &Atom) -> bool {
-    return SubexprStream::from_expr(expr.clone(), TOP_DOWN_DEPTH_WALK)
-        .any(|sub| if let Atom::Expression(sub) = sub {
-            is_grounded_op(&sub)
-        } else {
-            panic!("Expression is expected");
-        });
+fn is_variable_op(expr: &ExpressionAtom) -> bool {
+    match expr.children().get(0) {
+        Some(Atom::Variable(_)) => true,
+        _ => false,
+    }
+}
+
+fn has_grounded_sub_expr(expr: &ExpressionAtom) -> bool {
+    return is_grounded_op(expr) ||
+        SubexprStream::from_expr(Atom::Expression(expr.clone()), TOP_DOWN_DEPTH_WALK)
+            .any(|sub| if let Atom::Expression(sub) = sub {
+                    is_grounded_op(&sub)
+                } else {
+                    panic!("Expression is expected");
+                });
 }
 
 fn interpret_as_type_plan<'a, T: SpaceRef<'a>>(context: InterpreterContextRef<'a, T>,
@@ -470,8 +522,8 @@ fn call_op<'a, T: SpaceRef<'a>>(context: InterpreterContextRef<'a, T>, input: In
         }).collect();
         return_cached_result_plan(result)
     } else {
-        if let Atom::Expression(_) = input.atom() {
-            if !has_grounded_sub_expr(input.atom()) {
+        if let Atom::Expression(expr) = input.atom() {
+            if !has_grounded_sub_expr(expr) {
                 let key = input.atom().clone();
                 StepResult::execute(SequencePlan::new(
                     OrPlan::new(
@@ -508,6 +560,12 @@ fn interpret_reducted_plan<'a, T: SpaceRef<'a>>(context: InterpreterContextRef<'
     if let Atom::Expression(ref expr) = input.atom() {
         if is_grounded_op(expr) {
             Box::new(execute_plan(context, input))
+        } else if is_variable_op(expr) {
+            #[cfg(feature = "variable_operation")]
+            let result = Box::new(match_plan(context, input));
+            #[cfg(not(feature = "variable_operation"))]
+            let result = Box::new(StepResult::ret(vec![input]));
+            result
         } else {
             Box::new(match_plan(context, input))
         }
@@ -567,9 +625,8 @@ fn match_op<'a, T: SpaceRef<'a>>(context: InterpreterContextRef<'a, T>, input: I
     let mut query_bindings = context.space.query(&query);
     let results: Vec<InterpretedAtom> = query_bindings
         .drain(0..)
-        .map(|mut query_binding| {
-            let result = query_binding.resolve_and_remove(&var_x).unwrap();
-            let result = apply_bindings_to_atom(&result, &query_binding);
+        .map(|query_binding| {
+            let result = apply_bindings_to_atom(&Atom::Variable(var_x.clone()), &query_binding);
             // TODO: sometimes we apply bindings twice: first time here,
             // second time when inserting matched argument into nesting
             // expression.  It should be enough doing it only once.
@@ -681,6 +738,8 @@ impl<T: Debug> Debug for AlternativeInterpretationsPlan<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::*;
+    use crate::common::test_utils::*;
 
     #[test]
     fn test_match_all() {
@@ -700,16 +759,16 @@ mod tests {
         space.add(expr!("=" ("and" "True" "True") "True"));
         space.add(expr!("=" ("if" "True" then else) then));
         space.add(expr!("=" ("if" "False" then else) else));
-        space.add(expr!("=" ("Fritz" "croaks") "True"));
-        space.add(expr!("=" ("Fritz" "eats-flies") "True"));
-        space.add(expr!("=" ("Tweety" "chirps") "True"));
-        space.add(expr!("=" ("Tweety" "yellow") "True"));
-        space.add(expr!("=" ("Tweety" "eats-flies") "True"));
-        let expr = expr!("if" ("and" (x "croaks") (x "eats-flies"))
-            ("=" (x "frog") "True") "nop");
+        space.add(expr!("=" ("croaks" "Fritz") "True"));
+        space.add(expr!("=" ("eats-flies" "Fritz") "True"));
+        space.add(expr!("=" ("chirps" "Tweety") "True"));
+        space.add(expr!("=" ("yellow" "Tweety") "True"));
+        space.add(expr!("=" ("eats-flies" "Tweety") "True"));
+        let expr = expr!("if" ("and" ("croaks" x) ("eats-flies" x))
+            ("=" ("frog" x) "True") "nop");
 
         assert_eq!(interpret(&space, &expr),
-            Ok(vec![expr!("=" ("Fritz" "frog") "True")]));
+            Ok(vec![expr!("=" ("frog" "Fritz") "True")]));
     }
 
     fn results_are_equivalent(actual: &Result<Vec<Atom>, String>,
@@ -1035,6 +1094,20 @@ mod tests {
         } else {
             panic!("Non-empty result is expected");
         }
+    }
+
+    #[test]
+    fn interpret_match_variable_operation() {
+        let mut space = GroundingSpace::new();
+        space.add(expr!("=" ("foo" x) ("foo result" x)));
+        space.add(expr!("=" ("bar" x) ("bar result" x)));
+
+        let actual = interpret(&space, &expr!(op "arg")).unwrap();
+
+        #[cfg(feature = "variable_operation")]
+        assert_eq_no_order!(actual, vec![expr!("foo result" "arg"), expr!("bar result" "arg")]);
+        #[cfg(not(feature = "variable_operation"))]
+        assert_eq!(actual, vec![expr!(op "arg")]);
     }
 }
 

@@ -6,6 +6,8 @@ pub mod shared;
 pub mod assert;
 pub mod reformove;
 pub mod multitrie;
+pub mod holeyvec;
+pub mod owned_or_borrowed;
 
 mod flex_ref;
 pub use flex_ref::FlexRef;
@@ -14,15 +16,13 @@ mod arithmetics;
 pub use arithmetics::*;
 
 use crate::*;
+use crate::metta::text::{Tokenizer, SExprParser};
 use std::cell::RefCell;
 use std::fmt::{Debug, Display};
 use std::collections::HashMap;
 
-use crate::metta::metta_atom;
-
-pub fn init_logger(is_test: bool) {
-   let _ = env_logger::builder().is_test(is_test).try_init();
-}
+#[cfg(test)]
+pub(crate) mod test_utils;
 
 // TODO: move Operation and arithmetics under metta package as it uses metta_atom
 // Operation implements stateless operations as GroundedAtom.
@@ -36,7 +36,9 @@ pub struct Operation {
 
 impl Grounded for &'static Operation {
     fn type_(&self) -> Atom {
-        metta_atom(self.typ)
+        //TODO: Replace this parsing with a static Atom
+        let mut parser = SExprParser::new(self.typ);
+        parser.parse(&Tokenizer::new()).unwrap().unwrap()
     }
 
     fn execute(&self, args: &[Atom]) -> Result<Vec<Atom>, ExecError> {
@@ -99,33 +101,37 @@ impl<T> Display for GndRefCell<T> {
 }
 
 #[derive(Clone)]
-pub struct ReplacingMapper<T: Clone + std::hash::Hash + Eq + ?Sized, F: Fn(T) -> T> {
+pub struct CachingMapper<K: Clone + std::hash::Hash + Eq + ?Sized, V: Clone, F: Fn(K) -> V> {
     mapper: F,
-    mapping: HashMap<T, T>,
+    mapping: HashMap<K, V>,
 }
 
-impl<T: Clone + std::hash::Hash + Eq + ?Sized, F: Fn(T) -> T> ReplacingMapper<T, F> {
+impl<K: Clone + std::hash::Hash + Eq + ?Sized, V: Clone, F: Fn(K) -> V> CachingMapper<K, V, F> {
     pub fn new(mapper: F) -> Self {
         Self{ mapper, mapping: HashMap::new() }
     }
 
-    pub fn replace(&mut self, val: &mut T) {
-        match self.mapping.get(&val) {
-            Some(mapped) => *val = mapped.clone(),
+    pub fn replace(&mut self, key: K) -> V {
+        match self.mapping.get(&key) {
+            Some(mapped) => mapped.clone(),
             None => {
-                let mut key = (self.mapper)(val.clone());
-                std::mem::swap(&mut key, val);
-                self.mapping.insert(key, val.clone());
+                let new_val = (self.mapper)(key.clone());
+                self.mapping.insert(key, new_val.clone());
+                new_val
             }
         }
     }
 
-    pub fn mapping_mut(&mut self) -> &mut HashMap<T, T> {
+    pub fn mapping(&self) -> &HashMap<K, V> {
+        &self.mapping
+    }
+
+    pub fn mapping_mut(&mut self) -> &mut HashMap<K, V> {
         &mut self.mapping
     }
 
-    pub fn as_fn_mut<'a>(&'a mut self) -> impl 'a + FnMut(T) -> T {
-        move |mut t| { self.replace(&mut t); t }
+    pub fn as_fn_mut<'a>(&'a mut self) -> impl 'a + FnMut(K) -> V {
+        move |k| { self.replace(k) }
     }
 }
 

@@ -2,15 +2,12 @@
 
 pub mod text;
 pub mod interpreter;
-pub mod interpreter2;
+#[cfg(feature = "minimal")]
+pub mod interpreter_minimal;
 pub mod types;
 pub mod runner;
 
-use text::{SExprParser, Tokenizer};
-use regex::Regex;
-
 use crate::*;
-use crate::common::*;
 use crate::space::grounding::GroundingSpace;
 
 pub const ATOM_TYPE_UNDEFINED : Atom = sym!("%Undefined%");
@@ -32,48 +29,69 @@ pub const NOT_REDUCIBLE_SYMBOL : Atom = sym!("NotReducible");
 pub const NO_VALID_ALTERNATIVES : Atom = sym!("NoValidAlternatives");
 
 pub const EMPTY_SYMBOL : Atom = sym!("Empty");
+
 pub const EVAL_SYMBOL : Atom = sym!("eval");
 pub const CHAIN_SYMBOL : Atom = sym!("chain");
-pub const MATCH_SYMBOL : Atom = sym!("match");
-pub const DECONS_SYMBOL : Atom = sym!("decons");
-pub const CONS_SYMBOL : Atom = sym!("cons");
+pub const UNIFY_SYMBOL : Atom = sym!("unify");
+pub const DECONS_ATOM_SYMBOL : Atom = sym!("decons-atom");
+pub const CONS_ATOM_SYMBOL : Atom = sym!("cons-atom");
+pub const FUNCTION_SYMBOL : Atom = sym!("function");
+pub const RETURN_SYMBOL : Atom = sym!("return");
+pub const COLLAPSE_BIND_SYMBOL : Atom = sym!("collapse-bind");
+pub const SUPERPOSE_BIND_SYMBOL : Atom = sym!("superpose-bind");
 
-// TODO: use stdlib to parse input text
-pub fn metta_space(text: &str) -> GroundingSpace {
-    let tokenizer = common_tokenizer();
-    let mut parser = SExprParser::new(text);
-    let mut space = GroundingSpace::new();
-    loop {
-        let atom = parser.parse(&tokenizer).unwrap();
-        if let Some(atom) = atom {
-            space.add(atom);
-        } else {
-            break;
-        }
-    }
-    space
+pub const INTERPRET_SYMBOL : Atom = sym!("interpret");
+
+//TODO: convert these from functions to static strcutures, when Atoms are Send+Sync
+#[allow(non_snake_case)]
+pub fn UNIT_ATOM() -> Atom {
+    Atom::expr([])
 }
 
-fn common_tokenizer() -> Tokenizer {
-    let mut tokenizer = Tokenizer::new();
-    tokenizer.register_token(Regex::new(r"\d+").unwrap(),
-        |n| Atom::value(n.parse::<i32>().unwrap()));
-    tokenizer.register_token(Regex::new(r"true|false").unwrap(),
-        |b| Atom::value(b.parse::<bool>().unwrap()));
-    tokenizer.register_token(Regex::new(r"<").unwrap(), |_| Atom::gnd(LT));
-    tokenizer
+#[allow(non_snake_case)]
+pub fn UNIT_TYPE() -> Atom {
+    Atom::expr([ARROW_SYMBOL])
 }
 
-// TODO: use stdlib to parse input text
-pub fn metta_atom(atom: &str) -> Atom {
-    let tokenizer = common_tokenizer();
-    let mut parser = SExprParser::new(atom);
-    let atom = parser.parse(&tokenizer).unwrap();
-    if let Some(atom) = atom {
-        atom
+/// Initializes an error expression atom
+pub fn error_atom(err_atom: Option<Atom>, err_code: Option<Atom>, message: String) -> Atom {
+    let err_atom = match err_atom {
+        Some(err_atom) => err_atom,
+        None => EMPTY_SYMBOL,
+    };
+    if let Some(err_code) = err_code {
+        Atom::expr([ERROR_SYMBOL, err_atom, err_code, Atom::sym(message)])
     } else {
-        panic!("Single atom is expected");
+        Atom::expr([ERROR_SYMBOL, err_atom, Atom::sym(message)])
     }
 }
 
+/// Tests whether or not an atom is an error expression
+pub fn atom_is_error(atom: &Atom) -> bool {
+    match atom {
+        Atom::Expression(expr) => {
+            expr.children().len() > 0 && expr.children()[0] == ERROR_SYMBOL
+        },
+        _ => false,
+    }
+}
+
+/// Returns a message string from an error expression
+///
+/// NOTE: this function will panic if the suppoed atom is not a valid error expression
+pub fn atom_error_message(atom: &Atom) -> &str {
+    const PANIC_STR: &str = "Atom is not error expression";
+    match atom {
+        Atom::Expression(expr) => {
+            let sym_atom = match expr.children().len() {
+                3 => expr.children().get(2).unwrap(),
+                4 => expr.children().get(3).unwrap(),
+                _ => panic!("{}", PANIC_STR)
+            };
+            let sym_atom = <&SymbolAtom>::try_from(sym_atom).expect(PANIC_STR);
+            sym_atom.name()
+        },
+        _ => panic!("{}", PANIC_STR)
+    }
+}
 

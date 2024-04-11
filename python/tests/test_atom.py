@@ -95,6 +95,26 @@ class AtomTest(unittest.TestCase):
         self.assertEqual(interpret(space, E(x2Atom, ValueAtom(1))),
                 [ValueAtom(2)])
 
+    def test_grounded_returns_python_value_unwrap_false(self):
+        def x2_op(atom):
+            return [2 * atom.get_object().value]
+        x2Atom = OperationAtom('*2', x2_op, type_names=["int", "int"], unwrap=False)
+        expr = E(x2Atom, ValueAtom(1))
+
+        space = GroundingSpaceRef()
+        self.assertEqual(interpret(space, expr),
+                [E(S('Error'), expr, S('Grounded operation which is defined using unwrap=False should return atom instead of Python type'))])
+
+    def test_grounded_no_return(self):
+        space = GroundingSpaceRef()
+        def print_op(input):
+            print(input)
+
+        printExpr = E(OperationAtom('print', print_op, type_names=["Atom", "->"], unwrap=False), S("test"))
+        self.assertTrue(atom_is_error(interpret(space, printExpr)[0]))
+        printExpr = E(OperationAtom('print', print_op, type_names=["Atom", "->"], unwrap=True), ValueAtom("test"))
+        self.assertEqual(interpret(space, printExpr), [E()])
+
     def test_plan(self):
         space = GroundingSpaceRef()
         interpreter = Interpreter(space, E(x2Atom, ValueAtom(1)))

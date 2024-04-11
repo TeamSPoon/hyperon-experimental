@@ -6,7 +6,7 @@ from test_common import *
 class ExamplesTest(HyperonTestCase):
 
     def test_grounded_functions(self):
-        metta = MeTTa()
+        metta = MeTTa(env_builder=Environment.test_env())
         obj = SomeObject()
         # using & as a prefix is not obligatory, but is naming convention
         metta.register_atom("&obj", ValueAtom(obj))
@@ -14,7 +14,7 @@ class ExamplesTest(HyperonTestCase):
         target = metta.parse_single('(call:foo &obj)')
         # interpreting this target in another space still works,
         # because substitution '&obj' -> obj is done by metta
-        metta2 = MeTTa()
+        metta2 = MeTTa(env_builder=Environment.test_env())
         result = interpret(metta2.space(), target)
         self.assertTrue(obj.called)
         self.assertEqual(result, [])
@@ -28,7 +28,7 @@ class ExamplesTest(HyperonTestCase):
     # interpretation.
     @unittest.skip("TODO")
     def test_self_modify(self):
-        metta = MeTTa()
+        metta = MeTTa(env_builder=Environment.test_env())
         metta.run(
         '''
             (= (remove-state $var)
@@ -48,7 +48,7 @@ class ExamplesTest(HyperonTestCase):
                          [[S('Sam')]])
 
     def test_new_object(self):
-        metta = MeTTa()
+        metta = MeTTa(env_builder=Environment.test_env())
         pglob = Global(10)
         ploc = 10
         metta.register_token("pglob", lambda _: ValueAtom(pglob))
@@ -93,38 +93,38 @@ class ExamplesTest(HyperonTestCase):
         self.assertEqual(ploca.get_object().value, 5)
 
     def test_frog_reasoning(self):
-        metta = MeTTa()
+        metta = MeTTa(env_builder=Environment.test_env())
 
         metta.run('''
-            (= (Fritz croaks) True)
-            (= (Tweety chirps) True)
-            (= (Tweety yellow) True)
-            (= (Tweety eats_flies) True)
-            (= (Fritz eats_flies) True)
+            (= (croaks Fritz) True)
+            (= (chirps Tweety) True)
+            (= (yellow Tweety) True)
+            (= (eats_flies Tweety) True)
+            (= (eats_flies Fritz) True)
         ''')
 
-        fritz_frog = metta.run('!(if (and ($x croaks) ($x eats_flies)) (= ($x frog) True) nop)')[0]
-        self.assertEqual(metta.parse_all('(= (Fritz frog) True)'), fritz_frog)
+        fritz_frog = metta.run('!(if (and (croaks $x) (eats_flies $x)) (= (frog $x) True) nop)')[0]
+        self.assertEqual(metta.parse_all('(= (frog Fritz) True)'), fritz_frog)
         metta.space().add_atom(fritz_frog[0])
 
-        self.assertEqualMettaRunnerResults([metta.parse_all('(= (Fritz green) True)')],
-                metta.run('!(if ($x frog) (= ($x green) True) nop)'))
+        self.assertEqualMettaRunnerResults([metta.parse_all('(= (green Fritz) True)')],
+                metta.run('!(if (frog $x) (= (green $x) True) nop)'))
 
     def test_infer_function_application_type(self):
-        metta = MeTTa()
+        metta = MeTTa(env_builder=Environment.test_env())
 
         metta.run('''
-           (= (: (apply $f $x) $r) (and (: $f (=> $a $r)) (: $x $a)))
+           (= (: (apply\' $f $x) $r) (and (: $f (=> $a $r)) (: $x $a)))
 
            (= (: reverse (=> String String)) True)
            (= (: "Hello" String) True)
         ''')
 
-        output = metta.run('!(if (: (apply reverse "Hello") $t) $t Wrong)')
+        output = metta.run('!(if (: (apply\' reverse "Hello") $t) $t Wrong)')
         self.assertEqualMettaRunnerResults(output, [[S('String')]])
 
     def test_plus_reduces_Z(self):
-        metta = MeTTa()
+        metta = MeTTa(env_builder=Environment.test_env())
 
         metta.run('''
            (= (eq $x $x) True)
@@ -152,14 +152,14 @@ class ExamplesTest(HyperonTestCase):
         # explicitly from another space should be safe, though)
         # NOTE: these tests are not indended to remain valid, but are needed to
         # detect, if something is changes in the interpreter
-        metta1 = MeTTa()
+        metta1 = MeTTa(env_builder=Environment.test_env())
         metta1.run('''
             (eq A B)
             (= (f-in-s2) failure)
             (= (how-it-works?) (f-in-s2))
             (= (inverse $x) (match &self (eq $y $x) $y))
         ''')
-        metta2 = MeTTa()
+        metta2 = MeTTa(env_builder=Environment.test_env())
         metta2.register_atom("&space1", metta1.run("! &self")[0][0])
         metta2.run('''
             (eq C B)
@@ -180,7 +180,7 @@ class ExamplesTest(HyperonTestCase):
         self.assertEqualMettaRunnerResults(metta1.run('!(how-it-works?)'), [[S('failure')]])
 
     def test_custom_deptypes(self):
-        metta = MeTTa()
+        metta = MeTTa(env_builder=Environment.test_env())
         metta.run('''
             (= (:? $c)
                (match &self (:= $c $t) $t))
@@ -256,7 +256,7 @@ class ExamplesTest(HyperonTestCase):
         # expression, since HumansAreMortal expects an element of (Human Socrates) - not the type itself
 
         # Another syntax
-        metta = MeTTa()
+        metta = MeTTa(env_builder=Environment.test_env())
         metta.run('''
             (= (:? $c)
                (match &self (:: $c $t) $t))
@@ -313,7 +313,7 @@ class ExamplesTest(HyperonTestCase):
     def test_visit_kim(self):
         # legacy test
         # can be moved to b4_nondeterm.metta or removed
-        metta = MeTTa()
+        metta = MeTTa(env_builder=Environment.test_env())
         metta.run('''
             (= (perform (visit $x)) (perform (lunch-order $x)))
             (= (perform (visit $x)) (perform (health-check $x)))
@@ -344,7 +344,7 @@ class ExamplesTest(HyperonTestCase):
             [metta.parse_all('False True')])
 
     def test_char_vs_string(self):
-        metta = MeTTa()
+        metta = MeTTa(env_builder=Environment.test_env())
         self.assertEqual(repr(metta.run("!('A')")), "[[('A')]]")
         self.assertEqual(repr(metta.run('!("A")')), '[[("A")]]')
         self.assertEqualMettaRunnerResults(metta.run("!(get-type 'A')"), [[S('Char')]])

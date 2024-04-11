@@ -3,7 +3,7 @@ import unittest
 from hyperon import *
 from test_common import HyperonTestCase
 
-class TestSpace(AbstractSpace):
+class CustomSpace(AbstractSpace):
 
     def __init__(self, unwrap=True):
         super().__init__()
@@ -66,7 +66,7 @@ class CustomSpaceTest(HyperonTestCase):
 
     def test_custom_space(self):
 
-        test_space = TestSpace()
+        test_space = CustomSpace()
         test_space.test_attrib = "Test Space Payload Attrib"
 
         kb = SpaceRef(test_space)
@@ -78,7 +78,7 @@ class CustomSpaceTest(HyperonTestCase):
         self.assertEqualNoOrder(kb.get_atoms(), [S("a"), S("b")])
 
     def test_remove(self):
-        kb = SpaceRef(TestSpace())
+        kb = SpaceRef(CustomSpace())
         kb.add_atom(S("a"))
         kb.add_atom(S("b"))
         kb.add_atom(S("c"))
@@ -88,7 +88,7 @@ class CustomSpaceTest(HyperonTestCase):
         self.assertEqualNoOrder(kb.get_atoms(), [S("a"), S("c")])
 
     def test_replace(self):
-        kb = SpaceRef(TestSpace())
+        kb = SpaceRef(CustomSpace())
         kb.add_atom(S("a"))
         kb.add_atom(S("b"))
         kb.add_atom(S("c"))
@@ -97,7 +97,7 @@ class CustomSpaceTest(HyperonTestCase):
         self.assertEqualNoOrder(kb.get_atoms(), [S("a"), S("d"), S("c")])
 
     def test_query(self):
-        kb = SpaceRef(TestSpace())
+        kb = SpaceRef(CustomSpace())
         kb.add_atom(E(S("A"), S("B")))
         kb.add_atom(E(S("C"), S("D")))
         # Checking that multiple matches can be returned
@@ -107,10 +107,10 @@ class CustomSpaceTest(HyperonTestCase):
         self.assertEqualNoOrder(result, [{"x": S("B")}, {"x": S("E")}])
 
     def test_atom_containing_space(self):
-        m = MeTTa()
+        m = MeTTa(env_builder=Environment.test_env())
 
         # Make a little space and add it to the MeTTa interpreter's space
-        little_space = SpaceRef(TestSpace())
+        little_space = SpaceRef(CustomSpace())
         little_space.add_atom(E(S("A"), S("B")))
         space_atom = G(little_space)
         m.space().add_atom(E(S("little-space"), space_atom))
@@ -127,16 +127,30 @@ class CustomSpaceTest(HyperonTestCase):
         little_space.add_atom(E(S("big-space"), G(m.space())))
 
     def test_match_nested_custom_space(self):
-        nested = SpaceRef(TestSpace())
+        nested = SpaceRef(CustomSpace())
         nested.add_atom(E(S("A"), S("B")))
         space_atom = G(nested)
 
-        runner = MeTTa()
-        runner.space().add_atom(space_atom)
+        runner = MeTTa(env_builder=Environment.test_env())
         runner.tokenizer().register_token("nested", lambda token: space_atom)
 
         result = runner.run("!(match nested (A $x) $x)")
         self.assertEqual([[S("B")]], result)
+
+    def test_runner_with_custom_space(self):
+
+        test_space = CustomSpace()
+        test_space.test_attrib = "Test Space Payload Attrib"
+
+        space = SpaceRef(test_space)
+        space.add_atom(E(S("="), S("key"), S("val")))
+
+        metta = MeTTa(space=space, env_builder=Environment.test_env())
+
+        self.assertEqual(metta.space().get_payload().test_attrib, "Test Space Payload Attrib")
+        self.assertEqualMettaRunnerResults(metta.run("!(match &self (= key $val) $val)"),
+            [[S("val")]]
+        )
 
 if __name__ == "__main__":
     unittest.main()

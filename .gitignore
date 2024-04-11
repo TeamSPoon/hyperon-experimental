@@ -2,3 +2,8 @@
 *.swp
 compile_commands.json
 .cache
+target/
+Cargo.lock
+.DS_Store
+.vscode
+.aider*

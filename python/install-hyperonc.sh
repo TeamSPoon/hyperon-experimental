@@ -30,7 +30,7 @@ sh /tmp/rustup.sh -y && rm /tmp/rustup.sh
 export PATH="${PATH}:${HOME}/.cargo/bin"
 cargo install cbindgen
 
-python3 -m pip install conan==1.60.2 pip==23.1.2
+python3 -m pip install conan==1.62 pip==23.1.2
 PATH="${PATH}:${HOME}/.local/bin"
 conan profile new --detect default
 
@@ -38,7 +38,7 @@ mkdir -p ${HOME}/hyperonc
 cd ${HOME}/hyperonc
 git init
 git remote add origin $HYPERONC_URL
-git fetch origin $HYPERONC_REV
+git fetch --depth=1 origin $HYPERONC_REV
 git reset --hard FETCH_HEAD
 
 mkdir -p ${HOME}/hyperonc/c/build

@@ -1,6 +1,6 @@
 from .atoms import *
 from .base import *
-from .runner import MeTTa
+from .runner import *
 
 def _version(dist_name):
     try:
@@ -12,7 +12,7 @@ def _version(dist_name):
             from importlib_metadata import PackageNotFoundError, version  # pragma: no cover
         return version(dist_name)
     except:
-        return "unknown"
+        return "0.1.8+localbuild"
 
 __version__ = _version(__name__)
 

@@ -29,3 +29,10 @@ atom_t expr(atom_t atom, ...) {
     va_end(ap);
     return atom_expr(children, argno);
 }
+
+metta_t new_test_metta(void) {
+    space_t space = space_new_grounding_space();
+    metta_t metta = metta_new_with_space_environment_and_stdlib(&space, env_builder_use_test_env(), NULL, NULL);
+    space_free(space);
+    return metta;
+}
